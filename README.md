@@ -227,6 +227,87 @@ llm keys set agent-gateway --value unused
 llm -m agent-gateway "explain this code"
 ```
 
+## OpenClaw Integration
+
+[OpenClaw](https://openclaw.ai) can use Agent Gateway as its LLM backend via the `copilot-proxy` plugin.
+
+**Quick setup:**
+```bash
+# Run the setup script
+./setup-openclaw.sh 8080 claude-code
+
+# Start Agent Gateway
+python3 agent_server.py --port 8080
+
+# Test
+openclaw agent --agent main --message "hello"
+```
+
+**Manual setup:**
+
+1. Enable the copilot-proxy plugin:
+```bash
+openclaw plugins enable copilot-proxy
+```
+
+2. Add provider config to `~/.openclaw/openclaw.json`:
+```json
+{
+  "models": {
+    "providers": {
+      "copilot-proxy": {
+        "baseUrl": "http://localhost:8080/v1",
+        "apiKey": "n/a",
+        "api": "openai-completions",
+        "authHeader": false,
+        "models": [
+          {"id": "claude-code", "name": "claude-code", "contextWindow": 128000, "maxTokens": 8192},
+          {"id": "codex", "name": "codex", "contextWindow": 128000, "maxTokens": 8192}
+        ]
+      }
+    }
+  }
+}
+```
+
+3. Add auth profile to `~/.openclaw/agents/main/agent/auth-profiles.json`:
+```json
+{
+  "profiles": {
+    "copilot-proxy:local": {
+      "type": "token",
+      "provider": "copilot-proxy",
+      "token": "n/a"
+    }
+  },
+  "lastGood": {
+    "copilot-proxy": "copilot-proxy:local"
+  }
+}
+```
+
+4. Set the default model and restart:
+```bash
+openclaw models set copilot-proxy/claude-code
+openclaw gateway restart
+```
+
+**Running multiple backends:**
+
+Use systemd services to run dedicated instances on different ports:
+```bash
+# Install user services
+cp systemd/agent-gateway-claude.service ~/.config/systemd/user/
+cp systemd/agent-gateway-codex.service ~/.config/systemd/user/
+
+# Edit paths in service files, then:
+systemctl --user daemon-reload
+systemctl --user enable --now agent-gateway-claude  # port 8080
+systemctl --user enable --now agent-gateway-codex   # port 8081
+```
+
+Update OpenClaw's `baseUrl` to point to the desired backend port.
+
 ## Security
 
 The wrapper uses `--permission-mode bypassPermissions` for Claude Code, enabling arbitrary command execution. Mitigations:
@@ -244,6 +325,8 @@ The wrapper uses `--permission-mode bypassPermissions` for Claude Code, enabling
 | `agent_server.py` | OpenAI-compatible HTTP server |
 | `agent-daemon.sh` | Persistent daemon launcher |
 | `agent-client.py` | Daemon client with /clear support |
+| `setup-openclaw.sh` | OpenClaw integration setup script |
+| `systemd/` | Systemd service files for daemonization |
 | `SPEC.md` | Technical specification |
 
 ## Troubleshooting

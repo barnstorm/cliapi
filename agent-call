@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+    cat <<EOF
+Usage: agent-call [OPTIONS] <prompt>
+
+Call a coding agent with a one-shot prompt.
+
+Options:
+    -a, --agent AGENT    Agent to use: claude, amazonq, codex, aider (default: claude)
+    -m, --model MODEL    Model override (agent-specific)
+    -f, --file FILE      Read prompt from file instead of argument
+    -c, --context DIR    Working directory context
+    -o, --output FILE    Write response to file
+    -j, --json-schema S  JSON schema for structured output (Claude Code only)
+    -q, --quiet          Suppress stderr, only output response
+    -r, --raw            Don't wrap prompt with one-shot instructions
+    -v, --verbose        Show agent stderr (debugging)
+    -h, --help           Show this help
+
+Examples:
+    agent-call "explain this codebase"
+    agent-call -a amazonq -f prompt.txt
+    echo "fix the tests" | agent-call -
+    agent-call -c ./myproject "add error handling to main.py"
+    agent-call -j '{"type":"object","properties":{"files":{"type":"array"}}}' "list source files"
+EOF
+    exit "${1:-0}"
+}
+
+AGENT="claude"
+MODEL=""
+PROMPT=""
+CONTEXT=""
+OUTPUT=""
+JSON_SCHEMA=""
+QUIET=false
+RAW=false
+VERBOSE=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -a|--agent) AGENT="$2"; shift 2 ;;
+        -m|--model) MODEL="$2"; shift 2 ;;
+        -f|--file) PROMPT="$(cat "$2")"; shift 2 ;;
+        -c|--context) CONTEXT="$2"; shift 2 ;;
+        -o|--output) OUTPUT="$2"; shift 2 ;;
+        -j|--json-schema) JSON_SCHEMA="$2"; shift 2 ;;
+        -q|--quiet) QUIET=true; shift ;;
+        -r|--raw) RAW=true; shift ;;
+        -v|--verbose) VERBOSE=true; shift ;;
+        -h|--help) usage 0 ;;
+        -) PROMPT="$(cat)"; shift ;;
+        -*) echo "Unknown option: $1" >&2; usage 1 ;;
+        *) PROMPT="$1"; shift ;;
+    esac
+done
+
+[[ -z "$PROMPT" ]] && { echo "Error: No prompt provided" >&2; usage 1; }
+
+# Wrap prompt to ensure complete one-shot execution
+wrap_prompt() {
+    cat <<EOF
+$1
+
+---
+IMPORTANT: This is a non-interactive, one-shot execution. You must:
+- Complete the entire task in a single response
+- Do NOT ask clarifying questions—make reasonable assumptions and state them
+- Do NOT wait for confirmation—proceed with the most sensible approach
+- Do NOT ask "would you like me to..." or "shall I..."—just do it
+- If multiple interpretations exist, pick the most likely one and note your choice
+- Provide complete, working output rather than partial solutions
+- If you cannot complete something, explain why and provide what you can
+EOF
+}
+
+if $RAW; then
+    WRAPPED_PROMPT="$PROMPT"
+else
+    WRAPPED_PROMPT="$(wrap_prompt "$PROMPT")"
+fi
+
+run_claude() {
+    local args=(-p "$WRAPPED_PROMPT")
+    [[ -n "$MODEL" ]] && args+=(--model "$MODEL")
+    [[ -n "$CONTEXT" ]] && args+=(--add-dir "$CONTEXT") && cd "$CONTEXT"
+    [[ -n "$JSON_SCHEMA" ]] && args+=(--json-schema "$JSON_SCHEMA" --output-format json)
+    [[ -z "$JSON_SCHEMA" ]] && args+=(--output-format text)
+
+    local output
+    local tmpstderr
+    tmpstderr=$(mktemp)
+
+    if $VERBOSE; then
+        output=$(claude "${args[@]}")
+    else
+        if ! output=$(claude "${args[@]}" 2>"$tmpstderr"); then
+            cat "$tmpstderr" >&2
+            rm -f "$tmpstderr"
+            return 1
+        fi
+        rm -f "$tmpstderr"
+    fi
+
+    # Extract structured_output from JSON result when using --json-schema
+    if [[ -n "$JSON_SCHEMA" ]]; then
+        # Try to extract structured_output field, fallback to full output if jq fails
+        if command -v jq &>/dev/null; then
+            local structured
+            structured=$(echo "$output" | jq -c '.structured_output // .result // .' 2>/dev/null)
+            if [[ -n "$structured" && "$structured" != "null" ]]; then
+                echo "$structured"
+            else
+                echo "$output"
+            fi
+        else
+            echo "$output"
+        fi
+    else
+        echo "$output"
+    fi
+}
+
+run_amazonq() {
+    local args=()
+    [[ -n "$CONTEXT" ]] && cd "$CONTEXT"
+    # Amazon Q CLI uses 'q chat' with --no-interactive for one-shot
+    echo "$WRAPPED_PROMPT" | q chat --no-interactive 2>/dev/null || \
+    # Fallback to older amazonq command
+    echo "$WRAPPED_PROMPT" | amazonq chat --no-interactive 2>/dev/null
+}
+
+run_codex() {
+    # Use non-interactive exec mode for stable one-shot output.
+    local args=(exec --full-auto --color never --skip-git-repo-check)
+    [[ -n "$MODEL" ]] && args+=(-m "$MODEL")
+    [[ -n "$CONTEXT" ]] && args+=(-C "$CONTEXT")
+    printf '%s' "$WRAPPED_PROMPT" | codex "${args[@]}" -
+}
+
+run_aider() {
+    local args=(--yes --no-git --message "$WRAPPED_PROMPT")
+    [[ -n "$MODEL" ]] && args+=(--model "$MODEL")
+    [[ -n "$CONTEXT" ]] && cd "$CONTEXT"
+    aider "${args[@]}" 2>/dev/null
+}
+
+capture() {
+    if $QUIET; then
+        "$@" 2>/dev/null
+    else
+        "$@"
+    fi
+}
+
+result=$(
+    case "$AGENT" in
+        claude|claude-code) capture run_claude ;;
+        amazonq|q) capture run_amazonq ;;
+        codex|openai) capture run_codex ;;
+        aider) capture run_aider ;;
+        *) echo "Unknown agent: $AGENT" >&2; exit 1 ;;
+    esac
+)
+
+if [[ -n "$OUTPUT" ]]; then
+    echo "$result" > "$OUTPUT"
+else
+    echo "$result"
+fi

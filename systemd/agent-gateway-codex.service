@@ -1,0 +1,40 @@
+[Unit]
+Description=Agent Gateway (Codex backend)
+Documentation=https://github.com/your-repo/agent-gateway
+After=network.target
+
+[Service]
+Type=simple
+# Change to your user
+User=thermos
+Group=thermos
+
+# Working directory containing agent-call and agent_server.py
+WorkingDirectory=/home/thermos/workspace/cliapi
+
+# Port 8081 for Codex backend
+ExecStart=/usr/bin/python3 agent_server.py --port 8081 --host 127.0.0.1
+
+# Restart on failure
+Restart=on-failure
+RestartSec=5
+
+# Security hardening (optional, comment out if causing issues)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/tmp
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=agent-gateway-codex
+
+# Force all requests to use Codex backend
+Environment="AGENT_GATEWAY_FORCE_AGENT=codex"
+
+# Optional: set API key for auth
+# Environment="AGENT_GATEWAY_KEY=your-secret-key"
+
+[Install]
+WantedBy=multi-user.target

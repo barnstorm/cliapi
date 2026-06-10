@@ -8,7 +8,7 @@ Usage: agent-call [OPTIONS] <prompt>
 Call a coding agent with a one-shot prompt.
 
 Options:
-    -a, --agent AGENT    Agent to use: claude, amazonq, codex, aider (default: claude)
+    -a, --agent AGENT    Agent to use: claude, amazonq, codex, aider, kiro (default: claude)
     -m, --model MODEL    Model override (agent-specific)
     -f, --file FILE      Read prompt from file instead of argument
     -c, --context DIR    Working directory context
@@ -147,6 +147,21 @@ run_aider() {
     aider "${args[@]}" 2>/dev/null
 }
 
+run_kiro() {
+    # Kiro CLI (AWS Kiro). Defaults mirror the Amazon Q one-shot pattern, since
+    # the two share heritage. Override for your install via env vars:
+    #   KIRO_CLI        binary name           (default: kiro)
+    #   KIRO_ARGS       subcommand/flags      (default: chat --no-interactive)
+    #   KIRO_MODEL_FLAG flag to pass -m model (default: --model)
+    local bin="${KIRO_CLI:-kiro}"
+    # shellcheck disable=SC2206  # intentional word-splitting of configurable args
+    local args=(${KIRO_ARGS:-chat --no-interactive})
+    [[ -n "$CONTEXT" ]] && cd "$CONTEXT"
+    [[ -n "$MODEL" ]] && args+=("${KIRO_MODEL_FLAG:---model}" "$MODEL")
+    # Prompt on stdin for portability across one-shot CLIs.
+    printf '%s' "$WRAPPED_PROMPT" | "$bin" "${args[@]}"
+}
+
 capture() {
     if $QUIET; then
         "$@" 2>/dev/null
@@ -161,6 +176,7 @@ result=$(
         amazonq|q) capture run_amazonq ;;
         codex|openai) capture run_codex ;;
         aider) capture run_aider ;;
+        kiro|kiro-cli) capture run_kiro ;;
         *) echo "Unknown agent: $AGENT" >&2; exit 1 ;;
     esac
 )

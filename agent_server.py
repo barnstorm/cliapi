@@ -20,7 +20,7 @@ app = Flask(__name__)
 API_KEY = os.environ.get("AGENT_GATEWAY_KEY", "")
 
 # Force a specific agent regardless of model requested (for dedicated instances)
-# Valid values: claude, codex, amazonq, aider (or empty to use model-based routing)
+# Valid values: claude, codex, amazonq, aider, kiro (or empty to use model-based routing)
 FORCE_AGENT = os.environ.get("AGENT_GATEWAY_FORCE_AGENT", "")
 
 
@@ -46,6 +46,8 @@ MODEL_MAP = {
     "amazon-q": {"agent": "amazonq", "model": None},
     "amazonq": {"agent": "amazonq", "model": None},
     "codex": {"agent": "codex", "model": None},
+    "kiro": {"agent": "kiro", "model": None},
+    "kiro-cli": {"agent": "kiro", "model": None},
     "aider": {"agent": "aider", "model": None},
     "aider-gpt4": {"agent": "aider", "model": "gpt-4"},
     "aider-claude": {"agent": "aider", "model": "claude-3-opus-20240229"},
@@ -58,6 +60,7 @@ AVAILABLE_MODELS = [
     {"id": "claude-code-sonnet", "object": "model", "owned_by": "anthropic"},
     {"id": "amazon-q", "object": "model", "owned_by": "amazon"},
     {"id": "codex", "object": "model", "owned_by": "openai"},
+    {"id": "kiro", "object": "model", "owned_by": "amazon"},
     {"id": "aider", "object": "model", "owned_by": "aider"},
     {"id": "aider-gpt4", "object": "model", "owned_by": "aider"},
     {"id": "aider-claude", "object": "model", "owned_by": "aider"},
@@ -271,23 +274,25 @@ def chat_completions():
         if not messages:
             return jsonify({"error": {"message": "messages field required"}}), 400
 
-        # Map model to agent configuration
+        # Map model to agent configuration.
         model_config = MODEL_MAP.get(model_name)
-        if not model_config:
+
+        if FORCE_AGENT:
+            # Dedicated instance: route everything to the forced agent and accept
+            # any model string the consumer sends (e.g. a Hermes client pointed at
+            # a Kiro-backed gateway need not know our model aliases).
+            agent = FORCE_AGENT
+            model = None
+        elif model_config:
+            agent = model_config["agent"]
+            model = model_config["model"]
+        else:
             return jsonify({
                 "error": {
                     "message": f"Unknown model: {model_name}",
                     "type": "invalid_request_error",
                 }
             }), 400
-
-        agent = model_config["agent"]
-        model = model_config["model"]
-
-        # Override agent if FORCE_AGENT is set (for dedicated instances)
-        if FORCE_AGENT:
-            agent = FORCE_AGENT
-            model = None  # Reset model override when forcing agent
 
         # Convert messages to prompt
         prompt = messages_to_prompt(messages)

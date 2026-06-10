@@ -126,6 +126,11 @@ IMPORTANT: This is a non-interactive, one-shot execution. You must:
 | Amazon Q | `echo $prompt \| q chat --no-interactive` | N/A | Prompt-based |
 | Codex | `codex exec --full-auto` | Native flag | Prompt-based |
 | Aider | `aider --yes --no-git --message` | `--yes` flag | Prompt-based |
+| Kiro | `echo $prompt \| kiro chat --no-interactive` | N/A | Prompt-based |
+
+Backend invocation for Kiro is overridable via environment variables
+(`KIRO_CLI`, `KIRO_ARGS`, `KIRO_MODEL_FLAG`) so installs whose CLI differs from
+the Amazon Q-style default need no code changes.
 
 ### 2. agent_server.py (Python/Flask)
 
@@ -178,6 +183,7 @@ The `model` field maps to agent + configuration:
 | `claude-code-sonnet` | Claude Code | Uses sonnet model |
 | `amazon-q` | Amazon Q | |
 | `codex` | Codex CLI | |
+| `kiro` | Kiro CLI | AWS Kiro |
 | `aider` | Aider | Default model |
 | `aider-gpt4` | Aider | Forces GPT-4 |
 | `aider-claude` | Aider | Forces Claude |

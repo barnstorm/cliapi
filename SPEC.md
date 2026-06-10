@@ -126,11 +126,13 @@ IMPORTANT: This is a non-interactive, one-shot execution. You must:
 | Amazon Q | `echo $prompt \| q chat --no-interactive` | N/A | Prompt-based |
 | Codex | `codex exec --full-auto` | Native flag | Prompt-based |
 | Aider | `aider --yes --no-git --message` | `--yes` flag | Prompt-based |
-| Kiro | `echo $prompt \| kiro chat --no-interactive` | N/A | Prompt-based |
+| Kiro | `kiro-cli chat --no-interactive --trust-all-tools "$prompt"` | `--trust-all-tools` | Prompt-based |
 
-Backend invocation for Kiro is overridable via environment variables
-(`KIRO_CLI`, `KIRO_ARGS`, `KIRO_MODEL_FLAG`) so installs whose CLI differs from
-the Amazon Q-style default need no code changes.
+Kiro notes: headless mode takes the prompt as a positional argument (stdin is
+for piped context); there is no per-call model flag, so `-m` runs
+`kiro-cli settings chat.defaultModel` first (persistent); ANSI escape codes in
+output are stripped (kirodotdev/Kiro#8352). The invocation is overridable via
+`KIRO_CLI` and `KIRO_ARGS` env vars.
 
 ### 2. agent_server.py (Python/Flask)
 

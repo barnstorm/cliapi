@@ -192,7 +192,7 @@ export OPENAI_API_KEY=unused
 - Cursor (custom API endpoint)
 - LangChain
 - LlamaIndex
-- HermesAgent (or any agent that speaks an OpenAI-compatible endpoint)
+- Hermes Agent (Nous Research — via its `custom` provider)
 
 **LangChain example:**
 ```python
@@ -316,14 +316,27 @@ Update OpenClaw's `baseUrl` to point to the desired backend port.
 Select it per-request with `"model": "kiro"`, or dedicate a whole instance to it
 with `AGENT_GATEWAY_FORCE_AGENT=kiro`.
 
-The `kiro` defaults mirror the Amazon Q one-shot pattern (`kiro chat
---no-interactive`, prompt on stdin). If your install differs, override the
-invocation without touching code:
+The gateway invokes Kiro's [headless mode](https://kiro.dev/docs/cli/headless/):
 
 ```bash
-export KIRO_CLI=kiro                       # binary name
-export KIRO_ARGS="chat --no-interactive"   # subcommand/flags
-export KIRO_MODEL_FLAG=--model             # flag used to pass -m/model
+kiro-cli chat --no-interactive --trust-all-tools "<prompt>"
+```
+
+Notes:
+- `--trust-all-tools` is Kiro's permission bypass (counterpart of Claude Code's
+  `bypassPermissions`) — required so headless runs don't stall on approval.
+- Authenticate via `kiro-cli login` or the `KIRO_API_KEY` environment variable.
+- Headless mode has no per-call model flag; passing `-m` runs
+  `kiro-cli settings chat.defaultModel <model>` first, which changes your
+  persistent default.
+- ANSI color codes are stripped from output
+  ([kirodotdev/Kiro#8352](https://github.com/kirodotdev/Kiro/issues/8352)).
+
+If your install differs, override the invocation without touching code:
+
+```bash
+export KIRO_CLI=kiro-cli                                     # binary name
+export KIRO_ARGS="chat --no-interactive --trust-all-tools"   # subcommand/flags
 ```
 
 ```bash
@@ -334,16 +347,17 @@ export KIRO_MODEL_FLAG=--model             # flag used to pass -m/model
 AGENT_GATEWAY_FORCE_AGENT=kiro python3 agent_server.py --port 8082
 ```
 
-## Consumer: HermesAgent (and other API clients)
+## Consumer: Hermes Agent (and other API clients)
 
 The gateway *is* the API. Any agent that can call an OpenAI-compatible
-`/v1/chat/completions` endpoint — such as **HermesAgent** — can use it as its
-LLM backend, with a real coding agent like **Kiro** doing the work behind the
-scenes.
+`/v1/chat/completions` endpoint — such as
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) — can use it as
+its LLM backend, with a real coding agent like **Kiro** doing the work behind
+the scenes.
 
 ```
-  HermesAgent ──HTTP──▶  agent_server.py  ──▶  agent-call  ──▶  kiro
-  (consumer)             (OpenAI API)                            (backend)
+  Hermes Agent ──HTTP──▶  agent_server.py  ──▶  agent-call  ──▶  kiro-cli
+  (consumer)              (OpenAI API)                           (backend)
 ```
 
 1. Start a gateway dedicated to Kiro so the consumer doesn't need to know our
@@ -354,11 +368,22 @@ AGENT_GATEWAY_KEY=secret AGENT_GATEWAY_FORCE_AGENT=kiro \
   python3 agent_server.py --port 8082
 ```
 
-2. Point Hermes at it like any OpenAI endpoint:
+2. Configure Hermes Agent's `custom` provider in `~/.hermes/config.yaml`:
+
+```yaml
+model:
+  default: kiro
+  provider: custom
+  base_url: http://localhost:8082/v1
+  api_key: secret
+```
+
+   Or per-invocation / mid-session:
 
 ```bash
-export OPENAI_API_BASE=http://localhost:8082/v1   # or OPENAI_BASE_URL
-export OPENAI_API_KEY=secret
+hermes chat --provider custom --model kiro
+# or inside a session:
+/model custom:kiro
 ```
 
 3. Or per-request, without forcing the agent, target the backend by model name:
@@ -372,8 +397,8 @@ curl http://localhost:8080/v1/chat/completions \
 
 > When `AGENT_GATEWAY_FORCE_AGENT` is set, the gateway no longer rejects unknown
 > model names — it forwards every request to the forced backend. That keeps it
-> drop-in compatible with consumers (like Hermes) that send their own model
-> identifiers.
+> drop-in compatible with consumers (like Hermes) regardless of what model
+> identifier they send.
 
 ## Security
 

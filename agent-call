@@ -148,18 +148,22 @@ run_aider() {
 }
 
 run_kiro() {
-    # Kiro CLI (AWS Kiro). Defaults mirror the Amazon Q one-shot pattern, since
-    # the two share heritage. Override for your install via env vars:
-    #   KIRO_CLI        binary name           (default: kiro)
-    #   KIRO_ARGS       subcommand/flags      (default: chat --no-interactive)
-    #   KIRO_MODEL_FLAG flag to pass -m model (default: --model)
-    local bin="${KIRO_CLI:-kiro}"
+    # Kiro CLI (AWS). Headless mode takes the prompt as a positional argument;
+    # stdin is reserved for piping extra context. --trust-all-tools is Kiro's
+    # permission bypass (counterpart of claude's bypassPermissions). Auth comes
+    # from KIRO_API_KEY in the environment. Override for your install:
+    #   KIRO_CLI   binary name      (default: kiro-cli)
+    #   KIRO_ARGS  subcommand/flags (default: chat --no-interactive --trust-all-tools)
+    local bin="${KIRO_CLI:-kiro-cli}"
     # shellcheck disable=SC2206  # intentional word-splitting of configurable args
-    local args=(${KIRO_ARGS:-chat --no-interactive})
+    local args=(${KIRO_ARGS:-chat --no-interactive --trust-all-tools})
     [[ -n "$CONTEXT" ]] && cd "$CONTEXT"
-    [[ -n "$MODEL" ]] && args+=("${KIRO_MODEL_FLAG:---model}" "$MODEL")
-    # Prompt on stdin for portability across one-shot CLIs.
-    printf '%s' "$WRAPPED_PROMPT" | "$bin" "${args[@]}"
+    # Headless mode has no --model flag; the documented mechanism is the
+    # persistent default-model setting (this changes the user's default).
+    [[ -n "$MODEL" ]] && "$bin" settings chat.defaultModel "$MODEL" >/dev/null
+    # Strip ANSI escape codes kiro-cli emits even when piped
+    # (github.com/kirodotdev/Kiro/issues/8352).
+    "$bin" "${args[@]}" "$WRAPPED_PROMPT" | sed -e 's/\x1b\[[0-9;]*[a-zA-Z]//g'
 }
 
 capture() {

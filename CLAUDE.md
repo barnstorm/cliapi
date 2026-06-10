@@ -77,12 +77,12 @@ All prompts are automatically wrapped with one-shot execution instructions via `
 - **amazonq**: `q chat --no-interactive`
 - **codex**: `--approval-mode full-auto`
 - **aider**: `--yes --no-git`
-- **kiro**: `kiro chat --no-interactive` (prompt on stdin; override via `KIRO_CLI`/`KIRO_ARGS`/`KIRO_MODEL_FLAG`)
+- **kiro**: `kiro-cli chat --no-interactive --trust-all-tools "<prompt>"` (prompt as positional arg; `-m` sets `chat.defaultModel` persistently; ANSI codes stripped; override via `KIRO_CLI`/`KIRO_ARGS`)
 
 ### Consumers vs. Backends
 Two distinct integration roles:
 - **Backends** are coding agents the gateway *invokes* (claude, amazonq, codex, aider, kiro). Add one by writing a `run_<agent>` function in `agent-call` plus a dispatch case, then registering it in `MODEL_MAP`/`AVAILABLE_MODELS` in `agent_server.py`.
-- **Consumers** are clients that *call* the gateway's OpenAI-compatible API (OpenRouter, SDKs, OpenClaw, HermesAgent). They need no code changes — point them at `/v1`. Run with `AGENT_GATEWAY_FORCE_AGENT=<backend>` to dedicate an instance to one backend; in that mode the server accepts any `model` string the consumer sends and routes it to that backend.
+- **Consumers** are clients that *call* the gateway's OpenAI-compatible API (OpenRouter, SDKs, OpenClaw, Hermes Agent via its `custom` provider). They need no code changes — point them at `/v1`. Run with `AGENT_GATEWAY_FORCE_AGENT=<backend>` to dedicate an instance to one backend; in that mode the server accepts any `model` string the consumer sends and routes it to that backend.
 
 ### Daemon Communication
 - Uses FIFOs at /tmp/agent-in and /tmp/agent-out

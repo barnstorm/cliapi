@@ -1,0 +1,23 @@
+{
+  "_comment": "Single source of truth for the gateway's backends and model aliases. The HTTP server loads this to build its model routing, /v1/models list, and health probe. Adding a model alias is a config-only edit; adding a NEW backend also needs a run_<agent> function and dispatch case in agent-call.",
+  "agents": {
+    "claude":  { "binary": "claude", "owned_by": "anthropic" },
+    "amazonq": { "binary": "q",       "owned_by": "amazon" },
+    "codex":   { "binary": "codex",   "owned_by": "openai" },
+    "aider":   { "binary": "aider",   "owned_by": "aider" },
+    "kiro":    { "binary": "kiro-cli", "binary_env": "KIRO_CLI", "owned_by": "amazon" }
+  },
+  "models": {
+    "claude-code":        { "agent": "claude" },
+    "claude-code-opus":   { "agent": "claude", "model": "opus" },
+    "claude-code-sonnet": { "agent": "claude", "model": "sonnet" },
+    "amazon-q":           { "agent": "amazonq" },
+    "amazonq":            { "agent": "amazonq" },
+    "codex":              { "agent": "codex" },
+    "kiro":               { "agent": "kiro" },
+    "kiro-cli":           { "agent": "kiro" },
+    "aider":              { "agent": "aider" },
+    "aider-gpt4":         { "agent": "aider", "model": "gpt-4" },
+    "aider-claude":       { "agent": "aider", "model": "claude-3-opus-20240229" }
+  }
+}

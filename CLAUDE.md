@@ -81,7 +81,7 @@ All prompts are automatically wrapped with one-shot execution instructions via `
 
 ### Consumers vs. Backends
 Two distinct integration roles:
-- **Backends** are coding agents the gateway *invokes* (claude, amazonq, codex, aider, kiro). Add one by writing a `run_<agent>` function in `agent-call` plus a dispatch case, then registering it in `MODEL_MAP`/`AVAILABLE_MODELS` in `agent_server.py`.
+- **Backends** are coding agents the gateway *invokes* (claude, amazonq, codex, aider, kiro). The registry of agents and model aliases lives in `agents.json` (loaded by `agent_server.py` to build `MODEL_MAP`/`AVAILABLE_MODELS`/`AGENT_BINARIES`). Adding a **model alias** or editing metadata is a config-only edit. Adding a **new backend** also needs a `run_<agent>` function plus dispatch case in `agent-call` (per-agent invocation is bespoke and stays as code).
 - **Consumers** are clients that *call* the gateway's OpenAI-compatible API (OpenRouter, SDKs, OpenClaw, Hermes Agent via its `custom` provider). They need no code changes — point them at `/v1`. Run with `AGENT_GATEWAY_FORCE_AGENT=<backend>` to dedicate an instance to one backend; in that mode the server accepts any `model` string the consumer sends and routes it to that backend.
 
 ### Daemon Communication

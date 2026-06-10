@@ -41,43 +41,73 @@ def check_auth():
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 AGENT_CALL = os.path.join(SCRIPT_DIR, "agent-call")
 
-# Model to agent mapping
-MODEL_MAP = {
-    "claude-code": {"agent": "claude", "model": None},
-    "claude-code-opus": {"agent": "claude", "model": "opus"},
-    "claude-code-sonnet": {"agent": "claude", "model": "sonnet"},
-    "amazon-q": {"agent": "amazonq", "model": None},
-    "amazonq": {"agent": "amazonq", "model": None},
-    "codex": {"agent": "codex", "model": None},
-    "kiro": {"agent": "kiro", "model": None},
-    "kiro-cli": {"agent": "kiro", "model": None},
-    "aider": {"agent": "aider", "model": None},
-    "aider-gpt4": {"agent": "aider", "model": "gpt-4"},
-    "aider-claude": {"agent": "aider", "model": "claude-3-opus-20240229"},
+# Single source of truth for backends + model aliases. Falls back to these
+# built-in defaults if agents.json is missing or unreadable, so the server
+# still runs out of the box.
+REGISTRY_PATH = os.environ.get("AGENT_GATEWAY_REGISTRY", os.path.join(SCRIPT_DIR, "agents.json"))
+
+_DEFAULT_REGISTRY = {
+    "agents": {
+        "claude": {"binary": "claude", "owned_by": "anthropic"},
+        "amazonq": {"binary": "q", "owned_by": "amazon"},
+        "codex": {"binary": "codex", "owned_by": "openai"},
+        "aider": {"binary": "aider", "owned_by": "aider"},
+        "kiro": {"binary": "kiro-cli", "binary_env": "KIRO_CLI", "owned_by": "amazon"},
+    },
+    "models": {
+        "claude-code": {"agent": "claude"},
+        "claude-code-opus": {"agent": "claude", "model": "opus"},
+        "claude-code-sonnet": {"agent": "claude", "model": "sonnet"},
+        "amazon-q": {"agent": "amazonq"},
+        "amazonq": {"agent": "amazonq"},
+        "codex": {"agent": "codex"},
+        "kiro": {"agent": "kiro"},
+        "kiro-cli": {"agent": "kiro"},
+        "aider": {"agent": "aider"},
+        "aider-gpt4": {"agent": "aider", "model": "gpt-4"},
+        "aider-claude": {"agent": "aider", "model": "claude-3-opus-20240229"},
+    },
 }
 
-# Available models for /v1/models endpoint
-AVAILABLE_MODELS = [
-    {"id": "claude-code", "object": "model", "owned_by": "anthropic"},
-    {"id": "claude-code-opus", "object": "model", "owned_by": "anthropic"},
-    {"id": "claude-code-sonnet", "object": "model", "owned_by": "anthropic"},
-    {"id": "amazon-q", "object": "model", "owned_by": "amazon"},
-    {"id": "codex", "object": "model", "owned_by": "openai"},
-    {"id": "kiro", "object": "model", "owned_by": "amazon"},
-    {"id": "aider", "object": "model", "owned_by": "aider"},
-    {"id": "aider-gpt4", "object": "model", "owned_by": "aider"},
-    {"id": "aider-claude", "object": "model", "owned_by": "aider"},
-]
 
-# Backend agent -> CLI binary, used by the health probe to report which agents
-# are actually installed. Honors the same env overrides as agent-call.
-AGENT_BINARIES = {
-    "claude": "claude",
-    "amazonq": "q",
-    "codex": "codex",
-    "aider": "aider",
-    "kiro": os.environ.get("KIRO_CLI", "kiro-cli"),
-}
+def load_registry(path: str = REGISTRY_PATH) -> dict:
+    """Build MODEL_MAP, AVAILABLE_MODELS, and AGENT_BINARIES from agents.json."""
+    try:
+        with open(path) as f:
+            reg = json.load(f)
+    except (OSError, ValueError):
+        reg = _DEFAULT_REGISTRY
+
+    agents = reg.get("agents", {})
+    models = reg.get("models", {})
+
+    model_map = {
+        alias: {"agent": cfg["agent"], "model": cfg.get("model")}
+        for alias, cfg in models.items()
+    }
+
+    available = [
+        {
+            "id": alias,
+            "object": "model",
+            "owned_by": agents.get(cfg["agent"], {}).get("owned_by", "unknown"),
+        }
+        for alias, cfg in models.items()
+    ]
+
+    # agent -> resolved CLI binary (honoring per-agent env overrides like KIRO_CLI)
+    binaries = {
+        name: os.environ.get(spec["binary_env"], spec["binary"]) if spec.get("binary_env") else spec["binary"]
+        for name, spec in agents.items()
+    }
+
+    return {"model_map": model_map, "available_models": available, "agent_binaries": binaries}
+
+
+_registry = load_registry()
+MODEL_MAP = _registry["model_map"]
+AVAILABLE_MODELS = _registry["available_models"]
+AGENT_BINARIES = _registry["agent_binaries"]
 
 
 class AgentError(Exception):

@@ -221,3 +221,42 @@ def test_streaming_falls_back_to_buffered_for_json_schema(srv, client, monkeypat
                           "messages": [{"role": "user", "content": "x"}]})
     assert r.headers["Content-Type"].startswith("application/json")
     assert r.get_json()["object"] == "chat.completion"
+
+
+# --- registry (agents.json) --------------------------------------------------
+
+def test_shipped_registry_matches_expected_routing(srv):
+    assert srv.MODEL_MAP["kiro"] == {"agent": "kiro", "model": None}
+    assert srv.MODEL_MAP["aider-gpt4"] == {"agent": "aider", "model": "gpt-4"}
+    assert srv.AGENT_BINARIES["kiro"] == "kiro-cli"
+    owners = {m["id"]: m["owned_by"] for m in srv.AVAILABLE_MODELS}
+    assert owners["codex"] == "openai"
+    assert owners["claude-code"] == "anthropic"
+
+
+def test_registry_loads_custom_models_and_owners(srv, tmp_path):
+    reg = tmp_path / "agents.json"
+    reg.write_text(json.dumps({
+        "agents": {"foo": {"binary": "foo-cli", "owned_by": "acme"}},
+        "models": {"foo-fast": {"agent": "foo", "model": "turbo"}},
+    }))
+    loaded = srv.load_registry(str(reg))
+    assert loaded["model_map"]["foo-fast"] == {"agent": "foo", "model": "turbo"}
+    assert loaded["agent_binaries"]["foo"] == "foo-cli"
+    assert loaded["available_models"][0]["owned_by"] == "acme"
+
+
+def test_registry_honors_binary_env_override(srv, tmp_path, monkeypatch):
+    reg = tmp_path / "agents.json"
+    reg.write_text(json.dumps({
+        "agents": {"kiro": {"binary": "kiro-cli", "binary_env": "KIRO_CLI", "owned_by": "amazon"}},
+        "models": {"kiro": {"agent": "kiro"}},
+    }))
+    monkeypatch.setenv("KIRO_CLI", "/opt/kiro/kiro-cli")
+    loaded = srv.load_registry(str(reg))
+    assert loaded["agent_binaries"]["kiro"] == "/opt/kiro/kiro-cli"
+
+
+def test_registry_falls_back_when_file_missing(srv):
+    loaded = srv.load_registry("/no/such/registry.json")
+    assert loaded["model_map"]["kiro"]["agent"] == "kiro"

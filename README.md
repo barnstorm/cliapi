@@ -141,6 +141,29 @@ response = client.chat.completions.create(
 | `aider-gpt4` | Aider with GPT-4 |
 | `aider-claude` | Aider with Claude |
 
+**Extending the registry (`agents.json`):**
+
+Backends and model aliases are defined in `agents.json`, the single source of
+truth the server reads for routing, `/v1/models`, and the health probe:
+
+```json
+{
+  "agents": {
+    "kiro": { "binary": "kiro-cli", "binary_env": "KIRO_CLI", "owned_by": "amazon" }
+  },
+  "models": {
+    "kiro": { "agent": "kiro" },
+    "aider-gpt4": { "agent": "aider", "model": "gpt-4" }
+  }
+}
+```
+
+- Adding a **model alias** (or changing a binary/owner) is a config-only edit.
+- Adding a **new backend** also needs a `run_<agent>` function and dispatch case
+  in `agent-call`, since each agent's invocation is bespoke.
+- Point the server at an alternate file with `AGENT_GATEWAY_REGISTRY=/path.json`.
+  If the file is missing it falls back to built-in defaults.
+
 ### Mode 3: Daemon (`agent-daemon.sh` + `agent-client.py`)
 
 Persistent Claude Code process for low-latency repeated calls. Eliminates ~2-5s process startup time.
@@ -440,6 +463,7 @@ The wrapper uses `--permission-mode bypassPermissions` for Claude Code, enabling
 | `agent_server.py` | OpenAI-compatible HTTP server |
 | `agent-daemon.sh` | Persistent daemon launcher |
 | `agent-client.py` | Daemon client with /clear support |
+| `agents.json` | Backend + model-alias registry (single source of truth) |
 | `setup-openclaw.sh` | OpenClaw integration setup script |
 | `systemd/` | Systemd service files for daemonization |
 | `SPEC.md` | Technical specification |

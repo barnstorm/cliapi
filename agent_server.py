@@ -406,6 +406,26 @@ def chat_completions():
         if not messages:
             return jsonify({"error": {"message": "messages field required"}}), 400
 
+        # OpenAI tool/function calling can't be satisfied by a coding-agent
+        # backend. If the caller *requires* a tool call (tool_choice "required"
+        # or a specific function), fail clearly instead of returning a text
+        # answer that masquerades as a tool call. Optional tools (auto/none) are
+        # accepted and ignored, so clients that always attach tools still work.
+        tools = data.get("tools") or data.get("functions")
+        tool_choice = data.get("tool_choice")
+        tool_required = tool_choice == "required" or isinstance(tool_choice, dict)
+        if tools and tool_required:
+            return jsonify({
+                "error": {
+                    "message": (
+                        "This gateway proxies coding agents and does not support "
+                        "OpenAI tool/function calling. Remove `tool_choice` or set "
+                        "it to \"auto\"/\"none\"."
+                    ),
+                    "type": "invalid_request_error",
+                }
+            }), 400
+
         # Map model to agent configuration.
         model_config = MODEL_MAP.get(model_name)
 

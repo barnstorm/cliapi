@@ -92,6 +92,12 @@ completion. A backend that errors or isn't authenticated yields `502`, a
 timeout yields `504`, and an unknown model (when no agent is forced) yields
 `400`. This lets consumers like Hermes distinguish a real answer from a failure.
 
+**Tool calling:** OpenAI `tools`/`functions` can't be fulfilled by a coding-agent
+backend. Optional tools (`tool_choice` absent/`"auto"`/`"none"`) are accepted and
+ignored, so clients that always attach tools still work. A *required* tool call
+(`tool_choice: "required"` or a specific function) yields `400` rather than a
+text answer pretending to be a tool call.
+
 **Example request:**
 ```bash
 curl http://localhost:8080/v1/chat/completions \

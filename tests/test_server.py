@@ -260,3 +260,43 @@ def test_registry_honors_binary_env_override(srv, tmp_path, monkeypatch):
 def test_registry_falls_back_when_file_missing(srv):
     loaded = srv.load_registry("/no/such/registry.json")
     assert loaded["model_map"]["kiro"]["agent"] == "kiro"
+
+
+# --- tool calling ------------------------------------------------------------
+
+def test_required_tool_call_is_rejected(srv, client, monkeypatch):
+    monkeypatch.setattr(srv, "FORCE_AGENT", "kiro")
+    monkeypatch.setattr(srv, "call_agent", lambda *a, **k: "should not run")
+    r = client.post("/v1/chat/completions", json={
+        "model": "kiro",
+        "messages": [{"role": "user", "content": "weather?"}],
+        "tools": [{"type": "function", "function": {"name": "get_weather"}}],
+        "tool_choice": "required",
+    })
+    assert r.status_code == 400
+    assert r.get_json()["error"]["type"] == "invalid_request_error"
+
+
+def test_specific_function_tool_choice_is_rejected(srv, client, monkeypatch):
+    monkeypatch.setattr(srv, "FORCE_AGENT", "kiro")
+    monkeypatch.setattr(srv, "call_agent", lambda *a, **k: "x")
+    r = client.post("/v1/chat/completions", json={
+        "model": "kiro",
+        "messages": [{"role": "user", "content": "hi"}],
+        "tools": [{"type": "function", "function": {"name": "f"}}],
+        "tool_choice": {"type": "function", "function": {"name": "f"}},
+    })
+    assert r.status_code == 400
+
+
+def test_optional_tools_are_ignored_not_rejected(srv, client, monkeypatch):
+    monkeypatch.setattr(srv, "FORCE_AGENT", "kiro")
+    monkeypatch.setattr(srv, "call_agent", lambda *a, **k: "answer")
+    r = client.post("/v1/chat/completions", json={
+        "model": "kiro",
+        "messages": [{"role": "user", "content": "hi"}],
+        "tools": [{"type": "function", "function": {"name": "f"}}],
+        "tool_choice": "auto",
+    })
+    assert r.status_code == 200
+    assert r.get_json()["choices"][0]["message"]["content"] == "answer"

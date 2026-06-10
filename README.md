@@ -60,6 +60,7 @@ One-shot execution with automatic prompt wrapping for non-interactive behavior.
 | `-j, --json-schema` | JSON schema for structured output |
 | `-q, --quiet` | Suppress stderr |
 | `-r, --raw` | Skip prompt wrapping |
+| `-s, --stream` | Stream output as produced (text only, no buffering) |
 
 ### Mode 2: HTTP Server (`agent_server.py`)
 
@@ -79,6 +80,11 @@ AGENT_GATEWAY_KEY=mysecret python3 agent_server.py --port 8080
 | POST | `/v1/chat/completions` | Chat completion |
 | GET | `/v1/models` | List available models |
 | GET | `/health` | Readiness check — reports installed backends; 503 if the forced/only agent is missing |
+
+**Streaming:** with `"stream": true`, the server forwards the agent's output as
+real Server-Sent Events as it is produced (not buffered-then-chunked), and kills
+the backend process if the client disconnects. Streaming is skipped when a JSON
+schema is requested, since structured output can't be streamed.
 
 **Error semantics:** agent failures map to proper HTTP status codes with an
 OpenAI-style error envelope, rather than being returned as a successful

@@ -220,7 +220,12 @@ Standard OpenAI chat completion response:
 
 **Streaming:**
 
-When `stream: true`, responses use Server-Sent Events. Since underlying agents don't stream, the complete response is chunked into simulated stream events.
+When `stream: true` (and no JSON schema is requested), the server spawns
+`agent-call -s` and forwards the agent's stdout as Server-Sent Events *as it is
+produced*, rather than buffering the full reply first. If the client
+disconnects, the backend subprocess is terminated. Requests that ask for both
+streaming and a JSON schema fall back to the buffered path, since structured
+output cannot be streamed.
 
 ### 3. agent-daemon.sh (Bash)
 
@@ -338,7 +343,7 @@ Recommended: Keep server on localhost, tunnel through authenticated proxy.
 
 ## Limitations
 
-1. **No true streaming**: Underlying agents don't support streaming; responses are buffered and chunked.
+1. **Streaming granularity**: HTTP streaming forwards agent stdout as it arrives, so real-time deltas depend on whether the underlying agent flushes incrementally; agents that emit their reply only at completion will stream as a single late chunk. Streaming is unavailable when a JSON schema is requested.
 
 2. **Agent availability**: `agent-call` assumes agents are installed and in PATH. The HTTP server's `/health` endpoint reports which backends are present and returns 503 when a forced/only agent is missing.
 

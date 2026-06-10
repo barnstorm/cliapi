@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 import uuid
 from hmac import compare_digest
@@ -238,34 +239,80 @@ def create_response(
     }
 
 
-def stream_response(content: str, model: str) -> Generator[str, None, None]:
-    """Generate SSE stream for streaming responses."""
+def stream_agent_response(
+    prompt: str,
+    agent: str,
+    model: str | None,
+    context: str | None,
+    model_name: str,
+) -> Generator[str, None, None]:
+    """Stream a backend agent's output as OpenAI SSE chunks.
+
+    Unlike the old buffer-then-chunk approach, this spawns agent-call in
+    streaming mode and forwards output as the agent produces it. If the client
+    disconnects, the backend subprocess is killed so it doesn't keep running
+    (and holding a bypassPermissions shell open).
+    """
+    cmd = [AGENT_CALL, "-a", agent, "-s"]
+    if model:
+        cmd.extend(["-m", model])
+    if context:
+        cmd.extend(["-c", context])
+    cmd.append(prompt)
+
     completion_id = generate_completion_id()
     created = int(time.time())
 
-    # Split content into chunks for simulated streaming
-    chunk_size = 20  # characters per chunk
-    chunks = [content[i:i + chunk_size] for i in range(0, len(content), chunk_size)]
-
-    if not chunks:
-        chunks = [""]
-
-    for i, chunk in enumerate(chunks):
-        data = {
+    def chunk(delta: dict, finish: str | None = None) -> str:
+        return "data: " + json.dumps({
             "id": completion_id,
             "object": "chat.completion.chunk",
             "created": created,
-            "model": model,
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": {"content": chunk} if chunk else {},
-                    "finish_reason": None if i < len(chunks) - 1 else "stop",
-                }
-            ],
-        }
-        yield f"data: {json.dumps(data)}\n\n"
+            "model": model_name,
+            "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
+        }) + "\n\n"
 
+    # Capture stderr to a temp file so a chatty agent can't deadlock on a full
+    # stderr pipe, and so we can surface the message if it fails.
+    errfile = tempfile.TemporaryFile()
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=errfile,
+        cwd=context or SCRIPT_DIR,
+    )
+
+    yield chunk({"role": "assistant"})
+
+    produced = False
+    try:
+        fd = proc.stdout.fileno()
+        while True:
+            data = os.read(fd, 4096)
+            if not data:
+                break
+            produced = True
+            yield chunk({"content": data.decode("utf-8", "replace")})
+    except GeneratorExit:
+        proc.kill()
+        proc.wait()
+        errfile.close()
+        raise
+    finally:
+        try:
+            proc.stdout.close()
+        except Exception:
+            pass
+
+    ret = proc.wait()
+    if ret != 0:
+        errfile.seek(0)
+        err = errfile.read().decode("utf-8", "replace").strip() or f"agent '{agent}' exited {ret}"
+        if not produced:
+            yield chunk({"content": f"[error] {err}"})
+    errfile.close()
+
+    yield chunk({}, finish="stop")
     yield "data: [DONE]\n\n"
 
 
@@ -355,7 +402,20 @@ def chat_completions():
         # Extract JSON schema if present
         json_schema = extract_json_schema(response_format)
 
-        # Call the agent
+        # Structured output can't stream, so streaming is only honored when no
+        # JSON schema is requested.
+        if stream and not json_schema:
+            return Response(
+                stream_agent_response(prompt, agent, model, context, model_name),
+                mimetype="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",  # disable proxy buffering
+                },
+            )
+
+        # Buffered path (raises AgentError -> proper HTTP status on failure)
         response_content = call_agent(
             prompt=prompt,
             agent=agent,
@@ -363,18 +423,7 @@ def chat_completions():
             context=context,
             json_schema=json_schema,
         )
-
-        if stream:
-            return Response(
-                stream_response(response_content, model_name),
-                mimetype="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                },
-            )
-        else:
-            return jsonify(create_response(response_content, model_name))
+        return jsonify(create_response(response_content, model_name))
 
     except AgentError as e:
         return jsonify({

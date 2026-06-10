@@ -16,6 +16,7 @@ Options:
     -j, --json-schema S  JSON schema for structured output (Claude Code only)
     -q, --quiet          Suppress stderr, only output response
     -r, --raw            Don't wrap prompt with one-shot instructions
+    -s, --stream         Stream agent output as produced (no buffering; text only)
     -v, --verbose        Show agent stderr (debugging)
     -h, --help           Show this help
 
@@ -37,6 +38,7 @@ OUTPUT=""
 JSON_SCHEMA=""
 QUIET=false
 RAW=false
+STREAM=false
 VERBOSE=false
 
 while [[ $# -gt 0 ]]; do
@@ -49,6 +51,7 @@ while [[ $# -gt 0 ]]; do
         -j|--json-schema) JSON_SCHEMA="$2"; shift 2 ;;
         -q|--quiet) QUIET=true; shift ;;
         -r|--raw) RAW=true; shift ;;
+        -s|--stream) STREAM=true; shift ;;
         -v|--verbose) VERBOSE=true; shift ;;
         -h|--help) usage 0 ;;
         -) PROMPT="$(cat)"; shift ;;
@@ -173,6 +176,31 @@ capture() {
         "$@"
     fi
 }
+
+# Streaming variant of run_claude: write tokens straight to stdout instead of
+# capturing the whole reply first.
+run_claude_stream() {
+    local args=(-p "$WRAPPED_PROMPT" --output-format text)
+    [[ -n "$MODEL" ]] && args+=(--model "$MODEL")
+    [[ -n "$CONTEXT" ]] && args+=(--add-dir "$CONTEXT") && cd "$CONTEXT"
+    claude "${args[@]}"
+}
+
+# Streaming mode: run the agent with stdout flowing live (no command-
+# substitution buffering, no -o file, no JSON post-processing). The non-claude
+# run_* functions already write directly to stdout, so they stream as-is.
+if $STREAM && [[ -z "$JSON_SCHEMA" ]]; then
+    $QUIET && exec 2>/dev/null
+    case "$AGENT" in
+        claude|claude-code) run_claude_stream ;;
+        amazonq|q) run_amazonq ;;
+        codex|openai) run_codex ;;
+        aider) run_aider ;;
+        kiro|kiro-cli) run_kiro ;;
+        *) echo "Unknown agent: $AGENT" >&2; exit 1 ;;
+    esac
+    exit $?
+fi
 
 result=$(
     case "$AGENT" in

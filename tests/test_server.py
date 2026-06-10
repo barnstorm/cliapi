@@ -4,6 +4,7 @@ Run with: pytest tests/
 """
 
 import importlib
+import json
 
 import pytest
 
@@ -150,3 +151,73 @@ def test_call_agent_returns_stdout_on_success(srv, tmp_path, monkeypatch):
     stub.chmod(0o755)
     monkeypatch.setattr(srv, "AGENT_CALL", str(stub))
     assert srv.call_agent("hi", "kiro") == "hello world"
+
+
+# --- streaming ---------------------------------------------------------------
+
+def _parse_sse(body):
+    """Return (role_count, joined_content, finish_reason, saw_done)."""
+    roles, contents, finish, done = 0, [], None, False
+    for line in body.splitlines():
+        if not line.startswith("data: "):
+            continue
+        payload = line[6:]
+        if payload == "[DONE]":
+            done = True
+            continue
+        obj = json.loads(payload)
+        delta = obj["choices"][0]["delta"]
+        if delta.get("role"):
+            roles += 1
+        if "content" in delta:
+            contents.append(delta["content"])
+        if obj["choices"][0]["finish_reason"]:
+            finish = obj["choices"][0]["finish_reason"]
+    return roles, "".join(contents), finish, done
+
+
+def _stub_agent_call(tmp_path, srv, monkeypatch, body):
+    stub = tmp_path / "agent-call"
+    stub.write_text(body)
+    stub.chmod(0o755)
+    monkeypatch.setattr(srv, "AGENT_CALL", str(stub))
+    monkeypatch.setattr(srv, "FORCE_AGENT", "kiro")
+
+
+def test_streaming_forwards_real_output_incrementally(srv, client, tmp_path, monkeypatch):
+    # Sleep between writes so the two halves arrive as separate reads — proves
+    # we forward as produced rather than buffering the whole reply first.
+    _stub_agent_call(tmp_path, srv, monkeypatch,
+                     "#!/usr/bin/env bash\nprintf 'Hello '\nsleep 0.05\nprintf 'world'\n")
+    r = client.post("/v1/chat/completions",
+                    json={"model": "kiro", "stream": True,
+                          "messages": [{"role": "user", "content": "hi"}]})
+    assert r.headers["Content-Type"].startswith("text/event-stream")
+    roles, content, finish, done = _parse_sse(r.get_data(as_text=True))
+    assert roles == 1
+    assert content == "Hello world"
+    assert finish == "stop"
+    assert done
+
+
+def test_streaming_surfaces_backend_error(srv, client, tmp_path, monkeypatch):
+    _stub_agent_call(tmp_path, srv, monkeypatch,
+                     "#!/usr/bin/env bash\necho 'kiro: not authed' >&2\nexit 1\n")
+    r = client.post("/v1/chat/completions",
+                    json={"model": "kiro", "stream": True,
+                          "messages": [{"role": "user", "content": "x"}]})
+    _, content, _, done = _parse_sse(r.get_data(as_text=True))
+    assert "not authed" in content
+    assert done
+
+
+def test_streaming_falls_back_to_buffered_for_json_schema(srv, client, monkeypatch):
+    monkeypatch.setattr(srv, "FORCE_AGENT", "kiro")
+    monkeypatch.setattr(srv, "call_agent", lambda *a, **k: '{"ok": true}')
+    r = client.post("/v1/chat/completions",
+                    json={"model": "kiro", "stream": True,
+                          "response_format": {"type": "json_schema",
+                                              "json_schema": {"schema": {"type": "object"}}},
+                          "messages": [{"role": "user", "content": "x"}]})
+    assert r.headers["Content-Type"].startswith("application/json")
+    assert r.get_json()["object"] == "chat.completion"

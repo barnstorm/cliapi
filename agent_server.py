@@ -7,9 +7,11 @@ Exposes local coding agents as /v1/chat/completions endpoint.
 
 import json
 import os
+import shutil
 import subprocess
 import time
 import uuid
+from hmac import compare_digest
 from typing import Generator
 
 from flask import Flask, Response, jsonify, request
@@ -25,12 +27,12 @@ FORCE_AGENT = os.environ.get("AGENT_GATEWAY_FORCE_AGENT", "")
 
 
 def check_auth():
-    """Check API key if configured."""
+    """Check API key if configured (constant-time comparison)."""
     if not API_KEY:
         return True
     auth = request.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
-        return auth[7:] == API_KEY
+        return compare_digest(auth[7:], API_KEY)
     return False
 
 
@@ -65,6 +67,26 @@ AVAILABLE_MODELS = [
     {"id": "aider-gpt4", "object": "model", "owned_by": "aider"},
     {"id": "aider-claude", "object": "model", "owned_by": "aider"},
 ]
+
+# Backend agent -> CLI binary, used by the health probe to report which agents
+# are actually installed. Honors the same env overrides as agent-call.
+AGENT_BINARIES = {
+    "claude": "claude",
+    "amazonq": "q",
+    "codex": "codex",
+    "aider": "aider",
+    "kiro": os.environ.get("KIRO_CLI", "kiro-cli"),
+}
+
+
+class AgentError(Exception):
+    """A backend agent failed. Carries an HTTP status and OpenAI error type."""
+
+    def __init__(self, message: str, status: int = 502, err_type: str = "agent_error"):
+        super().__init__(message)
+        self.message = message
+        self.status = status
+        self.err_type = err_type
 
 
 def extract_content(content) -> str:
@@ -126,8 +148,13 @@ def call_agent(
     json_schema: str | None = None,
     timeout: int = 300,
 ) -> str:
-    """Call agent-call script and return response."""
-    cmd = [AGENT_CALL, "-a", agent, "-q"]
+    """Call agent-call and return the response.
+
+    Raises AgentError on failure so the caller can map it to a proper HTTP
+    status instead of returning the error text as a successful completion.
+    """
+    # No -q here: we want the agent's stderr so failures carry a real message.
+    cmd = [AGENT_CALL, "-a", agent]
 
     if model:
         cmd.extend(["-m", model])
@@ -148,17 +175,22 @@ def call_agent(
             timeout=timeout,
             cwd=context or SCRIPT_DIR,
         )
-
-        if result.returncode != 0:
-            error_msg = result.stderr.strip() or "Agent execution failed"
-            return f"Error: {error_msg}"
-
-        return result.stdout.strip()
-
     except subprocess.TimeoutExpired:
-        return "Error: Agent execution timed out"
+        raise AgentError(
+            f"Agent '{agent}' timed out after {timeout}s",
+            status=504,
+            err_type="timeout_error",
+        )
+    except FileNotFoundError:
+        raise AgentError(f"agent-call not found at {AGENT_CALL}", status=500)
     except Exception as e:
-        return f"Error: {str(e)}"
+        raise AgentError(str(e), status=500)
+
+    if result.returncode != 0:
+        error_msg = result.stderr.strip() or result.stdout.strip() or "agent execution failed"
+        raise AgentError(error_msg, status=502)
+
+    return result.stdout.strip()
 
 
 def generate_completion_id() -> str:
@@ -239,8 +271,31 @@ def stream_response(content: str, model: str) -> Generator[str, None, None]:
 
 @app.route("/health", methods=["GET"])
 def health():
-    """Health check endpoint."""
-    return jsonify({"status": "ok", "service": "agent-gateway"})
+    """Health/readiness check.
+
+    Reports which backend agents are actually installed (binary on PATH). If a
+    forced agent is configured but missing, returns 503 so orchestrators can
+    detect a misconfigured instance instead of getting 502s on every request.
+    """
+    agents = {name: shutil.which(binary) is not None for name, binary in AGENT_BINARIES.items()}
+
+    status = "ok"
+    http_status = 200
+    if FORCE_AGENT:
+        if not agents.get(FORCE_AGENT, shutil.which(FORCE_AGENT) is not None):
+            status = "unavailable"
+            http_status = 503
+    elif not any(agents.values()):
+        status = "unavailable"
+        http_status = 503
+
+    body = {
+        "status": status,
+        "service": "agent-gateway",
+        "forced_agent": FORCE_AGENT or None,
+        "agents": agents,
+    }
+    return jsonify(body), http_status
 
 
 @app.route("/v1/models", methods=["GET"])
@@ -320,6 +375,14 @@ def chat_completions():
             )
         else:
             return jsonify(create_response(response_content, model_name))
+
+    except AgentError as e:
+        return jsonify({
+            "error": {
+                "message": e.message,
+                "type": e.err_type,
+            }
+        }), e.status
 
     except Exception as e:
         return jsonify({

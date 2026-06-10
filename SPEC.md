@@ -340,11 +340,11 @@ Recommended: Keep server on localhost, tunnel through authenticated proxy.
 
 1. **No true streaming**: Underlying agents don't support streaming; responses are buffered and chunked.
 
-2. **Agent availability**: Script assumes agents are installed and in PATH.
+2. **Agent availability**: `agent-call` assumes agents are installed and in PATH. The HTTP server's `/health` endpoint reports which backends are present and returns 503 when a forced/only agent is missing.
 
 3. **Context size**: No explicit context window management; large contexts may fail silently.
 
-4. **Error handling**: Agent errors may not propagate cleanly through all layers.
+4. **Error handling**: HTTP-layer agent failures propagate as OpenAI-style error envelopes with proper status codes (502 backend error, 504 timeout, 400 unknown model). CLI and daemon modes surface failures via process exit codes.
 
 5. **Daemon fragility**: FIFO-based communication can hang if reader/writer dies unexpectedly.
 

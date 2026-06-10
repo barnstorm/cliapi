@@ -78,7 +78,13 @@ AGENT_GATEWAY_KEY=mysecret python3 agent_server.py --port 8080
 |--------|------|---------|
 | POST | `/v1/chat/completions` | Chat completion |
 | GET | `/v1/models` | List available models |
-| GET | `/health` | Health check |
+| GET | `/health` | Readiness check — reports installed backends; 503 if the forced/only agent is missing |
+
+**Error semantics:** agent failures map to proper HTTP status codes with an
+OpenAI-style error envelope, rather than being returned as a successful
+completion. A backend that errors or isn't authenticated yields `502`, a
+timeout yields `504`, and an unknown model (when no agent is forced) yields
+`400`. This lets consumers like Hermes distinguish a real answer from a failure.
 
 **Example request:**
 ```bash
@@ -399,6 +405,17 @@ curl http://localhost:8080/v1/chat/completions \
 > model names — it forwards every request to the forced backend. That keeps it
 > drop-in compatible with consumers (like Hermes) regardless of what model
 > identifier they send.
+
+## Development
+
+```bash
+pip install -r requirements-dev.txt
+pytest                 # server routing, error mapping, health, auth, dispatch
+```
+
+`tests/test_server.py` covers the HTTP layer; `tests/test_agent_call.py`
+exercises the `agent-call` dispatcher against stub agent binaries, so no real
+agent CLIs are required to run the suite.
 
 ## Security
 
